@@ -21,5 +21,13 @@ public interface AppointmentRepository extends JpaRepository<Appointment, Long> 
             LocalDateTime from,
             LocalDateTime to
     );
+    // ⬇⬇⬇ NUEVOS: para usar en update
+    boolean existsByDoctorAndStartDateTimeAndIdNot(
+            Doctor doctor, LocalDateTime startDateTime, Long id
+    );
+
+    boolean existsByPatientAndStartDateTimeAndIdNot(
+            Patient patient, LocalDateTime startDateTime, Long id
+    );
 }
 

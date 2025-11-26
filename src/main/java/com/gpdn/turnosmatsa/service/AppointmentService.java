@@ -3,6 +3,7 @@ package com.gpdn.turnosmatsa.service;
 
 
 import com.gpdn.turnosmatsa.dto.AppointmentRequestDto;
+import com.gpdn.turnosmatsa.dto.AppointmentUpdateDto;
 import com.gpdn.turnosmatsa.dto.TimeSlotDto;
 import com.gpdn.turnosmatsa.model.Appointment;
 import com.gpdn.turnosmatsa.model.Doctor;
@@ -38,13 +39,28 @@ public class AppointmentService {
         this.patientService = patientService;
         this.studyTypeService = studyTypeService;
     }
+    private void validateDateAndTime(LocalDate date, LocalTime time) {
+        if (date == null || time == null) {
+            throw new IllegalArgumentException("Fecha y hora son obligatorias");
+        }
+
+        LocalDate hoy = LocalDate.now();
+        if (date.isBefore(hoy)) {
+            throw new IllegalArgumentException(
+                    "No se pueden asignar turnos en una fecha anterior al día de hoy"
+            );
+        }
+
+        if (time.isBefore(OPENING_TIME) || time.isAfter(CLOSING_TIME.minusHours(1))) {
+            throw new IllegalArgumentException("Hora fuera del horario de atención");
+        }
+    }
 
     @Transactional
     public Appointment book(AppointmentRequestDto dto) {
         Doctor doctor = doctorService.getById(dto.getDoctorId());
         StudyType studyType = studyTypeService.getById(dto.getStudyTypeId());
 
-        // Validación: el médico debe pertenecer al estudio elegido
         if (!doctor.getStudyType().getId().equals(studyType.getId())) {
             throw new IllegalArgumentException("El médico no corresponde al estudio seleccionado");
         }
@@ -59,19 +75,12 @@ public class AppointmentService {
         LocalDate date = dto.getDate();
         LocalTime time = dto.getTime();
 
-        if (date == null || time == null) {
-            throw new IllegalArgumentException("Fecha y hora son obligatorias");
-        }
-
-        // Validar que la hora está dentro del horario
-        if (time.isBefore(OPENING_TIME) || time.isAfter(CLOSING_TIME.minusHours(1))) {
-            throw new IllegalArgumentException("Hora fuera del horario de atención");
-        }
+        // ✅ usamos la validación común
+        validateDateAndTime(date, time);
 
         LocalDateTime start = LocalDateTime.of(date, time);
         LocalDateTime end = start.plusHours(1);
 
-        // Reglas de negocio clave:
         if (appointmentRepository.existsByDoctorAndStartDateTime(doctor, start)) {
             throw new IllegalStateException("El médico ya tiene un turno en ese horario");
         }
@@ -126,6 +135,49 @@ public class AppointmentService {
             d = d.plusDays(1);
         }
         return days;
+    }
+    @Transactional(readOnly = true)
+    public List<Appointment> findAll() {
+        return appointmentRepository.findAll();
+    }
+    @Transactional
+    public void delete(Long id) {
+        if (!appointmentRepository.existsById(id)) {
+            throw new NoSuchElementException("No existe un turno con id " + id);
+        }
+        appointmentRepository.deleteById(id);
+    }
+
+    // === MODIFICAR TURNO (fecha/hora) ===
+    @Transactional
+    public Appointment update(Long id, AppointmentUpdateDto dto) {
+        Appointment appt = appointmentRepository.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("No existe un turno con id " + id));
+
+        LocalDate newDate = dto.getDate();
+        LocalTime newTime = dto.getTime();
+
+        validateDateAndTime(newDate, newTime);
+
+        LocalDateTime newStart = LocalDateTime.of(newDate, newTime);
+        LocalDateTime newEnd = newStart.plusHours(1);
+
+        Doctor doctor = appt.getDoctor();
+        Patient patient = appt.getPatient();
+
+        // Validar solapamientos ignorando el propio turno
+        if (appointmentRepository.existsByDoctorAndStartDateTimeAndIdNot(doctor, newStart, id)) {
+            throw new IllegalStateException("El médico ya tiene un turno en ese horario");
+        }
+
+        if (appointmentRepository.existsByPatientAndStartDateTimeAndIdNot(patient, newStart, id)) {
+            throw new IllegalStateException("El paciente ya tiene un turno en ese horario");
+        }
+
+        appt.setStartDateTime(newStart);
+        appt.setEndDateTime(newEnd);
+
+        return appointmentRepository.save(appt);
     }
 }
 
